@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>俄罗斯方块</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #333;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      border: 2px solid #fff;
+      background-color: #000;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // 模拟微信小游戏 API
+    const wx = {
+      createCanvas() {
+        return document.getElementById('gameCanvas');
+      },
+      onTouchStart(callback) {
+        document.getElementById('gameCanvas').addEventListener('touchstart', callback);
+      },
+      onTouchMove(callback) {
+        document.getElementById('gameCanvas').addEventListener('touchmove', callback);
+      },
+      onTouchEnd(callback) {
+        document.getElementById('gameCanvas').addEventListener('touchend', callback);
+      }
+    };
+    
+    // 游戏配置
+    const GAME_CONFIG = {
+      rows: 20,
+      cols: 10,
+      blockSize: 30,
+      colors: [
+        '#000000', // 背景
+        '#FF0000', // I
+        '#00FF00', // J
+        '#0000FF', // L
+        '#FFFF00', // O
+        '#FF00FF', // S
+        '#00FFFF', // T
+        '#FFA500'  // Z
+      ]
+    };
+    
+    // 方块形状
+    const TETROMINOS = {
+      I: [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
+      J: [[2, 0, 0], [2, 2, 2], [0, 0, 0]],
+      L: [[0, 0, 3], [3, 3, 3], [0, 0, 0]],
+      O: [[4, 4], [4, 4]],
+      S: [[0, 5, 5], [5, 5, 0], [0, 0, 0]],
+      T: [[0, 6, 0], [6, 6, 6], [0, 0, 0]],
+      Z: [[7, 7, 0], [0, 7, 7], [0, 0, 0]]
+    };
+    
+    // 游戏状态
+    let gameState = {
+      canvas: null,
+      ctx: null,
+      grid: [],
+      currentPiece: null,
+      nextPiece: null,
+      score: 0,
+      lines: 0,
+      level: 1,
+      gameOver: false,
+      lastDropTime: 0,
+      dropInterval: 1000
+    };
+    
+    // 初始化游戏
+    function initGame() {
+      // 获取画布
+      gameState.canvas = wx.createCanvas();
+      gameState.ctx = gameState.canvas.getContext('2d');
+      
+      // 设置画布大小
+      gameState.canvas.width = GAME_CONFIG.cols * GAME_CONFIG.blockSize;
+      gameState.canvas.height = GAME_CONFIG.rows * GAME_CONFIG.blockSize;
+      
+      // 初始化网格
+      gameState.grid = Array(GAME_CONFIG.rows).fill().map(() => Array(GAME_CONFIG.cols).fill(0));
+      
+      // 生成初始方块
+      gameState.currentPiece = generatePiece();
+      gameState.nextPiece = generatePiece();
+      
+      // 绑定触摸事件
+      wx.onTouchStart(touchStart);
+      wx.onTouchMove(touchMove);
+      wx.onTouchEnd(touchEnd);
+      
+      // 开始游戏循环
+      gameLoop();
+    }
+    
+    // 生成随机方块
+    function generatePiece() {
+      const keys = Object.keys(TETROMINOS);
+      const randomKey = keys[Math.floor(Math.random() * keys.length)];
+      return {
+        shape: TETROMINOS[randomKey],
+        x: Math.floor(GAME_CONFIG.cols / 2) - Math.floor(TETROMINOS[randomKey][0].length / 2),
+        y: 0,
+        color: GAME_CONFIG.colors[parseInt(randomKey)]
+      };
+    }
+    
+    // 绘制游戏
+    function drawGame() {
+      // 清空画布
+      gameState.ctx.clearRect(0, 0, gameState.canvas.width, gameState.canvas.height);
+      
+      // 绘制网格
+      drawGrid();
+      
+      // 绘制当前方块
+      drawPiece(gameState.currentPiece);
+      
+      // 绘制已落下的方块
+      drawBoard();
+      
+      // 绘制分数和等级
+      drawStats();
+      
+      // 绘制游戏结束画面
+      if (gameState.gameOver) {
+        drawGameOver();
+      }
+    }
+    
+    // 绘制网格
+    function drawGrid() {
+      gameState.ctx.strokeStyle = '#555';
+      gameState.ctx.lineWidth = 1;
+      
+      // 绘制垂直线
+      for (let x = 0; x <= GAME_CONFIG.cols; x++) {
+        gameState.ctx.beginPath();
+        gameState.ctx.moveTo(x * GAME_CONFIG.blockSize, 0);
+        gameState.ctx.lineTo(x * GAME_CONFIG.blockSize, gameState.canvas.height);
+        gameState.ctx.stroke();
+      }
+      
+      // 绘制水平线
+      for (let y = 0; y <= GAME_CONFIG.rows; y++) {
+        gameState.ctx.beginPath();
+        gameState.ctx.moveTo(0, y * GAME_CONFIG.blockSize);
+        gameState.ctx.lineTo(gameState.canvas.width, y * GAME_CONFIG.blockSize);
+        gameState.ctx.stroke();
+      }
+    }
+    
+    // 绘制方块
+    function drawPiece(piece) {
+      for (let y = 0; y < piece.shape.length; y++) {
+        for (let x = 0; x < piece.shape[y].length; x++) {
+          if (piece.shape[y][x]) {
+            drawBlock(piece.x + x, piece.y + y, piece.color);
+          }
+        }
+      }
+    }
+    
+    // 绘制已落下的方块
+    function drawBoard() {
+      for (let y = 0; y < GAME_CONFIG.rows; y++) {
+        for (let x = 0; x < GAME_CONFIG.cols; x++) {
+          if (gameState.grid[y][x]) {
+            drawBlock(x, y, GAME_CONFIG.colors[gameState.grid[y][x]]);
+          }
+        }
+      }
+    }
+    
+    // 绘制单个方块
+    function drawBlock(x, y, color) {
+      gameState.ctx.fillStyle = color;
+      gameState.ctx.fillRect(
+        x * GAME_CONFIG.blockSize + 1,
+        y * GAME_CONFIG.blockSize + 1,
+        GAME_CONFIG.blockSize - 2,
+        GAME_CONFIG.blockSize - 2
+      );
+    }
+    
+    // 绘制分数和等级
+    function drawStats() {
+      gameState.ctx.fillStyle = '#FFFFFF';
+      gameState.ctx.font = '16px Arial';
+      gameState.ctx.textAlign = 'left';
+      gameState.ctx.fillText(`分数: ${gameState.score}`, 10, 20);
+      gameState.ctx.fillText(`行数: ${gameState.lines}`, 10, 40);
+      gameState.ctx.fillText(`等级: ${gameState.level}`, 10, 60);
+    }
+    
+    // 绘制游戏结束画面
+    function drawGameOver() {
+      gameState.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      gameState.ctx.fillRect(0, 0, gameState.canvas.width, gameState.canvas.height);
+      
+      gameState.ctx.fillStyle = '#FFFFFF';
+      gameState.ctx.font = '24px Arial';
+      gameState.ctx.textAlign = 'center';
+      gameState.ctx.fillText('游戏结束', gameState.canvas.width / 2, gameState.canvas.height / 2 - 20);
+      gameState.ctx.font = '16px Arial';
+      gameState.ctx.fillText(`最终分数: ${gameState.score}`, gameState.canvas.width / 2, gameState.canvas.height / 2 + 10);
+      gameState.ctx.fillText('点击屏幕重新开始', gameState.canvas.width / 2, gameState.canvas.height / 2 + 40);
+    }
+    
+    // 游戏循环
+    function gameLoop() {
+      if (gameState.gameOver) return;
+      
+      const now = Date.now();
+      if (now - gameState.lastDropTime > gameState.dropInterval) {
+        dropPiece();
+        gameState.lastDropTime = now;
+      }
+      
+      drawGame();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // 方块下落
+    function dropPiece() {
+      if (!collision(0, 1)) {
+        gameState.currentPiece.y++;
+      } else {
+        lockPiece();
+        clearLines();
+        gameState.currentPiece = gameState.nextPiece;
+        gameState.nextPiece = generatePiece();
+        
+        if (collision(0, 0)) {
+          gameState.gameOver = true;
+        }
+      }
+    }
+    
+    // 检查碰撞
+    function collision(offsetX, offsetY) {
+      for (let y = 0; y < gameState.currentPiece.shape.length; y++) {
+        for (let x = 0; x < gameState.currentPiece.shape[y].length; x++) {
+          if (gameState.currentPiece.shape[y][x]) {
+            const newX = gameState.currentPiece.x + x + offsetX;
+            const newY = gameState.currentPiece.y + y + offsetY;
+            
+            if (
+              newX < 0 ||
+              newX >= GAME_CONFIG.cols ||
+              newY >= GAME_CONFIG.rows ||
+              (newY >= 0 && gameState.grid[newY][newX])
+            ) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+    
+    // 锁定方块
+    function lockPiece() {
+      for (let y = 0; y < gameState.currentPiece.shape.length; y++) {
+        for (let x = 0; x < gameState.currentPiece.shape[y].length; x++) {
+          if (gameState.currentPiece.shape[y][x]) {
+            const gridY = gameState.currentPiece.y + y;
+            if (gridY >= 0) {
+              gameState.grid[gridY][gameState.currentPiece.x + x] = gameState.currentPiece.shape[y][x];
+            }
+          }
+        }
+      }
+    }
+    
+    // 消除行
+    function clearLines() {
+      let linesCleared = 0;
+      
+      for (let y = GAME_CONFIG.rows - 1; y >= 0; y--) {
+        if (gameState.grid[y].every(cell => cell)) {
+          gameState.grid.splice(y, 1);
+          gameState.grid.unshift(Array(GAME_CONFIG.cols).fill(0));
+          y++;
+          linesCleared++;
+        }
+      }
+      
+      if (linesCleared > 0) {
+        gameState.lines += linesCleared;
+        gameState.score += linesCleared * linesCleared * 100;
+        gameState.level = Math.floor(gameState.lines / 10) + 1;
+        gameState.dropInterval = 1000 - (gameState.level - 1) * 100;
+      }
+    }
+    
+    // 旋转方块
+    function rotatePiece() {
+      const originalShape = JSON.parse(JSON.stringify(gameState.currentPiece.shape));
+      
+      // 旋转矩阵
+      for (let y = 0; y < originalShape.length; y++) {
+        for (let x = 0; x < y; x++) {
+          [originalShape[y][x], originalShape[x][y]] = [originalShape[x][y], originalShape[y][x]];
+        }
+      }
+      
+      // 反转每一行
+      for (let y = 0; y < originalShape.length; y++) {
+        originalShape[y].reverse();
+      }
+      
+      gameState.currentPiece.shape = originalShape;
+      
+      // 检查碰撞，如果碰撞则恢复原状
+      if (collision(0, 0)) {
+        gameState.currentPiece.shape = JSON.parse(JSON.stringify(originalShape));
+      }
+    }
+    
+    // 移动方块
+    function movePiece(direction) {
+      if (!collision(direction, 0)) {
+        gameState.currentPiece.x += direction;
+      }
+    }
+    
+    // 触摸开始
+    let touchStartX = 0;
+    let touchStartY = 0;
+    
+    function touchStart(e) {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }
+    
+    // 触摸移动
+    function touchMove(e) {
+      if (gameState.gameOver) return;
+      
+      const touchX = e.touches[0].clientX;
+      const touchY = e.touches[0].clientY;
+      const deltaX = touchX - touchStartX;
+      const deltaY = touchY - touchStartY;
+      
+      if (Math.abs(deltaX) > Math.abs(deltaY)) {
+        // 水平移动
+        if (deltaX > 30) {
+          movePiece(1);
+          touchStartX = touchX;
+        } else if (deltaX < -30) {
+          movePiece(-1);
+          touchStartX = touchX;
+        }
+      } else {
+        // 垂直移动
+        if (deltaY > 30) {
+          dropPiece();
+          touchStartY = touchY;
+        }
+      }
+    }
+    
+    // 触摸结束
+    function touchEnd(e) {
+      if (gameState.gameOver) {
+        // 重新开始游戏
+        gameState.grid = Array(GAME_CONFIG.rows).fill().map(() => Array(GAME_CONFIG.cols).fill(0));
+        gameState.currentPiece = generatePiece();
+        gameState.nextPiece = generatePiece();
+        gameState.score = 0;
+        gameState.lines = 0;
+        gameState.level = 1;
+        gameState.gameOver = false;
+        gameState.dropInterval = 1000;
+        gameLoop();
+      } else {
+        // 点击旋转
+        rotatePiece();
+      }
+    }
+    
+    // 键盘事件处理
+    function handleKeyDown(e) {
+      if (gameState.gameOver) {
+        if (e.code === 'Space') {
+          // 空格键重新开始游戏
+          gameState.grid = Array(GAME_CONFIG.rows).fill().map(() => Array(GAME_CONFIG.cols).fill(0));
+          gameState.currentPiece = generatePiece();
+          gameState.nextPiece = generatePiece();
+          gameState.score = 0;
+          gameState.lines = 0;
+          gameState.level = 1;
+          gameState.gameOver = false;
+          gameState.dropInterval = 1000;
+          gameLoop();
+        }
+        return;
+      }
+      
+      switch (e.code) {
+        case 'ArrowLeft':
+          movePiece(-1);
+          break;
+        case 'ArrowRight':
+          movePiece(1);
+          break;
+        case 'ArrowDown':
+          dropPiece();
+          break;
+        case 'ArrowUp':
+          rotatePiece();
+          break;
+      }
+    }
+    
+    // 绑定键盘事件
+    document.addEventListener('keydown', handleKeyDown);
+    
+    // 开始游戏
+    initGame();
+  </script>
+</body>
+</html>
